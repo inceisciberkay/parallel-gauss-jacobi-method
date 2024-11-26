@@ -1,4 +1,4 @@
-#include "util.h"
+#include "utils.h"
 #include <float.h>
 #include <math.h>
 #include <mpi.h>
@@ -14,15 +14,6 @@ void usage() {
          "<output_file>\n");
 }
 
-// returns -1 if not found
-int find(int arr[], int size, int num) {
-  for (int i = 0; i < size; i++) {
-    if (arr[i] == num)
-      return i;
-  }
-  return -1;
-}
-
 int main(int argc, char *argv[]) {
   if (argc != 4) {
     fprintf(stderr, "Incorrect number of arguments.\n");
@@ -35,25 +26,18 @@ int main(int argc, char *argv[]) {
   MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
   MPI_Comm_rank(MPI_COMM_WORLD, &myid);
 
-  int matrix_size, num_values, *columns, *rows;
+  int matrix_size, num_values, *cols, *rows;
   double *values;
   double *b;
 
   if (myid == 0) { // master process
     // reading input files
-    char *input_matrix_A_filename = argv[1];
-    char *input_vector_B_filename = argv[2];
+    char *input_matrix_A_fname = argv[1];
+    char *input_vector_B_fname = argv[2];
 
-    // read input matrix A
-    if (!read_input_matrix_A_file(input_matrix_A_filename, &matrix_size,
-                                  &num_values, &columns, &rows, &values)) {
-      fprintf(stderr, "Input matrix A file could not be read.\n");
-      return 1;
-    }
-
-    // read input vector b
-    if (!read_input_vector_b_file(input_vector_B_filename, &b)) {
-      fprintf(stderr, "Input vector b file could not be read.\n");
+    if (!read_input(input_matrix_A_fname, input_vector_B_fname, &matrix_size,
+                    &num_values, &cols, &rows, &values, &b)) {
+      fprintf(stderr, "Error while reading input.\n");
       return 1;
     }
   }
@@ -65,17 +49,17 @@ int main(int argc, char *argv[]) {
   // compute its recvsize
   MPI_Bcast(&matrix_size, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-  const int LOCAL_COLUMN_COUNT = matrix_size / numprocs;
+  const int LOCAL_COL_COUNT = matrix_size / numprocs;
 
   /* distribute input matrix A and input vector b to child processes */
 
-  // partitioning columns, rows and values (uniform block column-wise
+  // partitioning cols, rows and values (uniform block column-wise
   // partitioning)
-  int *send_counts_columns, *displs_columns, *send_counts_rows, *displs_rows,
+  int *send_counts_cols, *displs_cols, *send_counts_rows, *displs_rows,
       *send_counts_b, *displs_b;
   if (myid == 0) {
-    send_counts_columns = malloc(numprocs * sizeof(int));
-    displs_columns = malloc(numprocs * sizeof(int));
+    send_counts_cols = malloc(numprocs * sizeof(int));
+    displs_cols = malloc(numprocs * sizeof(int));
 
     send_counts_rows = malloc(numprocs * sizeof(int));
     displs_rows = malloc(numprocs * sizeof(int));
@@ -84,25 +68,25 @@ int main(int argc, char *argv[]) {
     displs_b = malloc(numprocs * sizeof(int));
 
     for (int i = 0; i < numprocs; i++) {
-      send_counts_columns[i] = LOCAL_COLUMN_COUNT + 1;
-      displs_columns[i] = i * LOCAL_COLUMN_COUNT;
+      send_counts_cols[i] = LOCAL_COL_COUNT + 1;
+      displs_cols[i] = i * LOCAL_COL_COUNT;
 
-      send_counts_rows[i] = columns[(i + 1) * (LOCAL_COLUMN_COUNT)] -
-                            columns[i * (LOCAL_COLUMN_COUNT)];
+      send_counts_rows[i] = cols[(i + 1) * (LOCAL_COL_COUNT)] -
+                            cols[i * (LOCAL_COL_COUNT)];
       displs_rows[i] =
           i == 0 ? 0 : displs_rows[i - 1] + send_counts_rows[i - 1];
 
-      send_counts_b[i] = LOCAL_COLUMN_COUNT;
-      displs_b[i] = i * LOCAL_COLUMN_COUNT;
+      send_counts_b[i] = LOCAL_COL_COUNT;
+      displs_b[i] = i * LOCAL_COL_COUNT;
     }
   }
 
-  int rcvsize_columns = LOCAL_COLUMN_COUNT + 1;
-  int *local_columns = malloc(rcvsize_columns * sizeof(int));
-  MPI_Scatterv(columns, send_counts_columns, displs_columns, MPI_INT,
-               local_columns, rcvsize_columns, MPI_INT, 0, MPI_COMM_WORLD);
+  int rcvsize_cols = LOCAL_COL_COUNT + 1;
+  int *local_cols = malloc(rcvsize_cols * sizeof(int));
+  MPI_Scatterv(cols, send_counts_cols, displs_cols, MPI_INT,
+               local_cols, rcvsize_cols, MPI_INT, 0, MPI_COMM_WORLD);
 
-  int rcvsize_rows = local_columns[rcvsize_columns - 1] - local_columns[0];
+  int rcvsize_rows = local_cols[rcvsize_cols - 1] - local_cols[0];
   int *local_rows = malloc(rcvsize_rows * sizeof(int));
   double *local_values = malloc(rcvsize_rows * sizeof(double));
   MPI_Scatterv(rows, send_counts_rows, displs_rows, MPI_INT, local_rows,
@@ -111,20 +95,20 @@ int main(int argc, char *argv[]) {
                rcvsize_rows, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   // partitioning input vector b
-  int rcvsize_b = LOCAL_COLUMN_COUNT;
+  int rcvsize_b = LOCAL_COL_COUNT;
   double *local_b = malloc(rcvsize_b * sizeof(double));
   MPI_Scatterv(b, send_counts_b, displs_b, MPI_DOUBLE, local_b, rcvsize_b,
                MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   if (myid == 0) {
     free(rows);
-    free(columns);
+    free(cols);
     free(values);
     free(b);
     free(send_counts_rows);
     free(displs_rows);
-    free(send_counts_columns);
-    free(displs_columns);
+    free(send_counts_cols);
+    free(displs_cols);
     free(send_counts_b);
     free(displs_b);
   }
@@ -135,11 +119,11 @@ int main(int argc, char *argv[]) {
   int *my_send_counts = NULL;
   int **my_send_indexes = NULL;
 
-  for (int j = 0; j < LOCAL_COLUMN_COUNT; j++) {
-    int displ = local_columns[0];
-    for (int k = local_columns[j]; k < local_columns[j + 1]; k++) {
+  for (int j = 0; j < LOCAL_COL_COUNT; j++) {
+    int displ = local_cols[0];
+    for (int k = local_cols[j]; k < local_cols[j + 1]; k++) {
       int i = local_rows[k - displ];
-      int ipid = i / (LOCAL_COLUMN_COUNT); // mapping
+      int ipid = i / (LOCAL_COL_COUNT); // mapping
       if (ipid != myid) {
         int index_of_ipid_in_my_send_list =
             find(my_send_list, my_send_list_size, ipid);
@@ -236,8 +220,8 @@ int main(int argc, char *argv[]) {
   }
 
   // create local X's
-  double *local_X_new = malloc((LOCAL_COLUMN_COUNT) * sizeof(double));
-  double *local_X_old = calloc((LOCAL_COLUMN_COUNT), sizeof(double));
+  double *local_X_new = malloc((LOCAL_COL_COUNT) * sizeof(double));
+  double *local_X_old = calloc((LOCAL_COL_COUNT), sizeof(double));
 
   // execute the algorithm
   double error = DBL_MAX;
@@ -245,7 +229,7 @@ int main(int argc, char *argv[]) {
     /* perform parallel SpMV */
 
     // clear local X values
-    for (int i = 0; i < LOCAL_COLUMN_COUNT; i++) {
+    for (int i = 0; i < LOCAL_COL_COUNT; i++) {
       local_X_new[i] = 0;
     }
 
@@ -256,12 +240,12 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    for (int j = 0; j < LOCAL_COLUMN_COUNT; j++) {
-      int displ = local_columns[0];
-      for (int k = local_columns[j]; k < local_columns[j + 1]; k++) {
+    for (int j = 0; j < LOCAL_COL_COUNT; j++) {
+      int displ = local_cols[0];
+      for (int k = local_cols[j]; k < local_cols[j + 1]; k++) {
         int i = local_rows[k - displ];
         // check if i is my; if so i need to write into my send buffer
-        int ipid = i / LOCAL_COLUMN_COUNT; // mapping
+        int ipid = i / LOCAL_COL_COUNT; // mapping
         if (ipid != myid) {                // it is in my recvbuffer
           int index_of_ipid = find(my_send_list, my_send_list_size, ipid);
           int index_of_i = find(my_send_indexes[index_of_ipid],
@@ -269,7 +253,7 @@ int main(int argc, char *argv[]) {
           my_send_buffer[index_of_ipid][index_of_i] +=
               local_values[k - displ] * local_X_old[j];
         } else {
-          local_X_new[i - myid * LOCAL_COLUMN_COUNT] +=
+          local_X_new[i - myid * LOCAL_COL_COUNT] +=
               local_values[k - displ] * local_X_old[j];
         }
       }
@@ -294,14 +278,14 @@ int main(int argc, char *argv[]) {
     // update my local X according to the values coming from other processes
     for (int i = 0; i < my_recv_list_size; i++) {
       for (int j = 0; j < my_recv_counts[i]; j++) {
-        local_X_new[my_recv_indexes[i][j] - (myid) * (LOCAL_COLUMN_COUNT)] +=
+        local_X_new[my_recv_indexes[i][j] - (myid) * (LOCAL_COL_COUNT)] +=
             my_recv_buffer[i][j];
       }
     }
 
     // remaining calculations
     double local_error_sum = 0;
-    for (int i = 0; i < LOCAL_COLUMN_COUNT; i++) {
+    for (int i = 0; i < LOCAL_COL_COUNT; i++) {
       local_X_new[i] = local_X_new[i] + local_b[i];
       local_error_sum += pow(local_X_new[i] - local_X_old[i], 2);
     }
@@ -323,8 +307,8 @@ int main(int argc, char *argv[]) {
     result_X = malloc(matrix_size * sizeof(double));
   }
 
-  MPI_Gather(local_X_old, LOCAL_COLUMN_COUNT, MPI_DOUBLE, result_X,
-             LOCAL_COLUMN_COUNT, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  MPI_Gather(local_X_old, LOCAL_COL_COUNT, MPI_DOUBLE, result_X,
+             LOCAL_COL_COUNT, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
   MPI_Barrier(MPI_COMM_WORLD);
   double end = MPI_Wtime();
@@ -332,12 +316,12 @@ int main(int argc, char *argv[]) {
   printf("Time: %f seconds\n", time);
 
   if (myid == 0) {
-    char *output_vector_X_filename = argv[3];
-    printResults(output_vector_X_filename, result_X, matrix_size);
+    char *output_vector_X_fname = argv[3];
+    print_results(output_vector_X_fname, result_X, matrix_size);
   }
 
   free(local_rows);
-  free(local_columns);
+  free(local_cols);
   free(local_values);
   free(local_b);
 

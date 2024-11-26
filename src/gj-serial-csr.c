@@ -1,4 +1,4 @@
-#include "util.h"
+#include "utils.h"
 #include <float.h>
 #include <math.h>
 #include <stdint.h>
@@ -21,25 +21,18 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  char *input_matrix_A_filename = argv[1];
-  char *input_vector_B_filename = argv[2];
-  char *output_vector_X_filename = argv[3];
+  const char *input_matrix_A_fname = argv[1];
+  const char *input_vector_B_fname = argv[2];
+  const char *output_vector_X_fname = argv[3];
 
-  // read input matrix A
-  int matrix_size, num_elements, *rows, *columns;
-  double *elements;
+  // read input matrix and vector
+  int matrix_size, num_elements, *cols, *rows;
+  double *elements; // matrix A
+  double *b;        // vector b
 
-  if (!read_input_matrix_A_file(input_matrix_A_filename, &matrix_size,
-                                &num_elements, &rows, &columns, &elements)) {
-    fprintf(stderr, "Input matrix A file could not be read.\n");
-    return 1;
-  }
-
-  // read input vector b
-  double *b;
-
-  if (!read_input_vector_b_file(input_vector_B_filename, &b)) {
-    fprintf(stderr, "Input vector b file could not be read.\n");
+  if (!read_input(input_matrix_A_fname, input_vector_B_fname, &matrix_size,
+                  &num_elements, &rows, &cols, &elements, &b)) {
+    fprintf(stderr, "Error while reading input.\n");
     return 1;
   }
 
@@ -59,7 +52,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < matrix_size; i++) {
       double sum = 0;
       for (int j = rows[i]; j < rows[i + 1]; j++) {
-        sum += elements[j] * X_old[columns[j]];
+        sum += elements[j] * X_old[cols[j]];
       }
       X_new[i] = sum;
     }
@@ -84,13 +77,13 @@ int main(int argc, char *argv[]) {
   printf("Time: %f seconds\n", time);
 
   // output result vector X to the file
-  printResults(output_vector_X_filename, X_old, matrix_size);
+  print_results(output_vector_X_fname, X_old, matrix_size);
 
   free(b);
   free(X_old);
   free(X_new);
   free(rows);
-  free(columns);
+  free(cols);
   free(elements);
 
   return 0;
